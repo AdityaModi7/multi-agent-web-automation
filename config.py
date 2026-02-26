@@ -8,11 +8,11 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 if ANTHROPIC_API_KEY:
- LLM_PROVIDER = "anthropic"
+                LLM_PROVIDER = "anthropic"
 elif OPENAI_API_KEY:
- LLM_PROVIDER = "openai"
+                LLM_PROVIDER = "openai"
 else:
- LLM_PROVIDER = None
+                LLM_PROVIDER = None
 
 # Model settings
 ANTHROPIC_MODEL = "claude-sonnet-4-20250514"

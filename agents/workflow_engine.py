@@ -11,6 +11,16 @@ This is the agentic brain that ties everything together:
 Supports dry-run mode (default) for safe review before live submission.
 """
 
+from agents.auto_applier import auto_apply
+from agents.tracker import save_application, update_status, list_applications
+from agents.tailoring_agent import run_tailoring_pipeline
+from agents.profile_loader import load_profile, load_cached_profile, save_profile
+from agents.job_parser import parse_job_posting
+from agents.job_searcher import run_job_search, save_search_results, load_search_results
+from models import (
+                WorkflowConfig, SearchFilters, JobSearchResult,
+                ApplicationStatus, ApplyMethod,
+)
 import sys
 import time
 import json
@@ -19,312 +29,311 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models import (
- WorkflowConfig, SearchFilters, JobSearchResult,
- ApplicationStatus, ApplyMethod,
-)
-from agents.job_searcher import run_job_search, save_search_results, load_search_results
-from agents.job_parser import parse_job_posting
-from agents.profile_loader import load_profile, load_cached_profile, save_profile
-from agents.tailoring_agent import run_tailoring_pipeline
-from agents.tracker import save_application, update_status, list_applications
-from agents.auto_applier import auto_apply
-
 
 def get_profile(resume_path: str = None):
- """Load profile from cache or parse from resume."""
- cached = load_cached_profile()
- if cached:
- print(f"[OK] Loaded cached profile: {cached.name}")
- return cached
+    """Load profile from cache or parse from resume."""
+    cached = load_cached_profile()
+    if cached:
+        print(f"[OK] Loaded cached profile: {cached.name}")
+        return cached
 
- if resume_path:
- print(f" Parsing resume from {resume_path}...")
- else:
- print(" Parsing resume from data/my_resume.md...")
+    if resume_path:
+        print(f" Parsing resume from {resume_path}...")
+    else:
+        print(" Parsing resume from data/my_resume.md...")
 
- profile = load_profile(resume_path=resume_path)
- save_profile(profile)
- print(f"[OK] Profile parsed: {profile.name} — {len(profile.skills)} skills, {len(profile.experience)} roles")
- return profile
+    profile = load_profile(resume_path=resume_path)
+    save_profile(profile)
+    print(
+        f"[OK] Profile parsed: {profile.name} — {len(profile.skills)} skills, {len(profile.experience)} roles")
+    return profile
 
 
 def run_workflow(config: WorkflowConfig = None) -> dict:
- """Execute the full agentic workflow.
+    """Execute the full agentic workflow.
 
- Pipeline:
- Search → Parse → Fit Analysis → Tailor → Apply → Track
+    Pipeline:
+    Search → Parse → Fit Analysis → Tailor → Apply → Track
 
- Returns a summary dict with counts and details of each step.
- """
- config = config or WorkflowConfig()
+    Returns a summary dict with counts and details of each step.
+    """
+    config = config or WorkflowConfig()
 
- summary = {
- "started_at": datetime.now().isoformat(),
- "config": config.model_dump(),
- "jobs_found": 0,
- "jobs_parsed": 0,
- "jobs_above_threshold": 0,
- "resumes_tailored": 0,
- "applications_attempted": 0,
- "applications_submitted": 0,
- "applications_manual": 0,
- "errors": [],
- "results": [],
- }
+    summary = {
+        "started_at": datetime.now().isoformat(),
+        "config": config.model_dump(),
+        "jobs_found": 0,
+        "jobs_parsed": 0,
+        "jobs_above_threshold": 0,
+        "resumes_tailored": 0,
+        "applications_attempted": 0,
+        "applications_submitted": 0,
+        "applications_manual": 0,
+        "errors": [],
+        "results": [],
+    }
 
- print("\n" + "=" * 70)
- print(" ML/AI JOB APPLICATION WORKFLOW ENGINE")
- print("=" * 70)
- print(f" Mode: {' DRY RUN (no submissions)' if config.dry_run else ' LIVE (will submit!)'}")
- print(f" Min fit score: {config.min_fit_score}")
- print(f" Max applications: {config.max_applications_per_run}")
- print(f" Min salary: ${config.search_filters.min_salary:,}")
- print(f" Locations: {', '.join(config.search_filters.locations[:4])}")
- print("=" * 70)
+    print("\n" + "=" * 70)
+    print(" ML/AI JOB APPLICATION WORKFLOW ENGINE")
+    print("=" * 70)
+    print(
+        f" Mode: {' DRY RUN (no submissions)' if config.dry_run else ' LIVE (will submit!)'}")
+    print(f" Min fit score: {config.min_fit_score}")
+    print(f" Max applications: {config.max_applications_per_run}")
+    print(f" Min salary: ${config.search_filters.min_salary:,}")
+    print(f" Locations: {', '.join(config.search_filters.locations[:4])}")
+    print("=" * 70)
 
- # ── Step 1: Load Profile ────────────────────────────────────────────
- print("\n STEP 1: Loading profile...")
- profile = get_profile(config.resume_path)
+    # ── Step 1: Load Profile ────────────────────────────────────────────
+    print("\n STEP 1: Loading profile...")
+    profile = get_profile(config.resume_path)
 
- # ── Step 2: Search for Jobs ─────────────────────────────────────────
- print("\n STEP 2: Searching for ML/AI jobs...")
- search_run = run_job_search(config.search_filters)
- save_search_results(search_run)
- summary["jobs_found"] = search_run.total_found
+    # ── Step 2: Search for Jobs ─────────────────────────────────────────
+    print("\n STEP 2: Searching for ML/AI jobs...")
+    search_run = run_job_search(config.search_filters)
+    save_search_results(search_run)
+    summary["jobs_found"] = search_run.total_found
 
- if not search_run.results:
- print("\n[WARNING] No jobs found matching criteria. Try broadening search filters.")
- return summary
+    if not search_run.results:
+        print("\n[WARNING] No jobs found matching criteria. Try broadening search filters.")
+        return summary
 
- # ── Step 3: Process Each Job ────────────────────────────────────────
- print(f"\n STEP 3: Processing {min(len(search_run.results), config.max_applications_per_run)} jobs...")
- print("-" * 70)
+    # ── Step 3: Process Each Job ────────────────────────────────────────
+    print(
+        f"\n STEP 3: Processing {min(len(search_run.results), config.max_applications_per_run)} jobs...")
+    print("-" * 70)
 
- applied_count = 0
- already_applied = _get_existing_applications()
+    applied_count = 0
+    already_applied = _get_existing_applications()
 
- for i, job_result in enumerate(search_run.results):
- if applied_count >= config.max_applications_per_run:
- print(f"\n[STOP] Reached max applications ({config.max_applications_per_run}). Stopping.")
- break
+    for i, job_result in enumerate(search_run.results):
+        if applied_count >= config.max_applications_per_run:
+            print(
+                f"\n[STOP] Reached max applications ({config.max_applications_per_run}). Stopping.")
+            break
 
- # Skip if already applied
- app_key = f"{job_result.company.lower()}|{job_result.title.lower()}"
- if app_key in already_applied:
- print(f"\n[{i+1}] [SKIP] Already applied: {job_result.title} at {job_result.company}")
- continue
+        # Skip if already applied
+        app_key = f"{job_result.company.lower()}|{job_result.title.lower()}"
+        if app_key in already_applied:
+            print(
+                f"\n[{i+1}] [SKIP] Already applied: {job_result.title} at {job_result.company}")
+            continue
 
- print(f"\n[{i+1}/{len(search_run.results)}] {job_result.title} at {job_result.company}")
- print(f" Source: {job_result.source} | Location: {job_result.location or 'N/A'}")
- print(f" URL: {job_result.url[:80]}...")
+        print(
+            f"\n[{i+1}/{len(search_run.results)}] {job_result.title} at {job_result.company}")
+        print(
+            f" Source: {job_result.source} | Location: {job_result.location or 'N/A'}")
+        print(f" URL: {job_result.url[:80]}...")
 
- result_entry = {
- "title": job_result.title,
- "company": job_result.company,
- "url": job_result.url,
- "source": job_result.source,
- }
+        result_entry = {
+            "title": job_result.title,
+            "company": job_result.company,
+            "url": job_result.url,
+            "source": job_result.source,
+        }
 
- # ── 3a: Parse job posting in detail ─────────────────────────────
- try:
- if job_result.url:
- print(f" Parsing full job posting...")
- job = parse_job_posting(url=job_result.url)
- elif job_result.description_snippet:
- job = parse_job_posting(text=job_result.description_snippet)
- else:
- print(f" [WARNING] No URL or description — skipping")
- result_entry["status"] = "skipped_no_data"
- summary["results"].append(result_entry)
- continue
+        # ── 3a: Parse job posting in detail ─────────────────────────────
+        try:
+            if job_result.url:
+                print(f" Parsing full job posting...")
+                job = parse_job_posting(url=job_result.url)
+            elif job_result.description_snippet:
+                job = parse_job_posting(text=job_result.description_snippet)
+            else:
+                print(f" [WARNING] No URL or description — skipping")
+                result_entry["status"] = "skipped_no_data"
+                summary["results"].append(result_entry)
+                continue
 
- summary["jobs_parsed"] += 1
- print(f" [OK] Parsed: {job.title} at {job.company}")
- print(f" Required skills: {', '.join(job.required_skills[:6])}")
+            summary["jobs_parsed"] += 1
+            print(f" [OK] Parsed: {job.title} at {job.company}")
+            print(f" Required skills: {', '.join(job.required_skills[:6])}")
 
- except Exception as e:
- print(f" [ERROR] Failed to parse: {e}")
- result_entry["status"] = "parse_error"
- result_entry["error"] = str(e)
- summary["errors"].append(f"Parse error for {job_result.company}: {e}")
- summary["results"].append(result_entry)
- continue
+        except Exception as e:
+            print(f" [ERROR] Failed to parse: {e}")
+            result_entry["status"] = "parse_error"
+            result_entry["error"] = str(e)
+            summary["errors"].append(f"Parse error for {job_result.company}: {e}")
+            summary["results"].append(result_entry)
+            continue
 
- # ── 3b: Run tailoring pipeline (fit + resume + cover letter) ────
- try:
- tailoring_result = run_tailoring_pipeline(
- profile=profile,
- job=job,
- skip_if_below=config.min_fit_score,
- )
+        # ── 3b: Run tailoring pipeline (fit + resume + cover letter) ────
+        try:
+            tailoring_result = run_tailoring_pipeline(
+                profile=profile,
+                job=job,
+                skip_if_below=config.min_fit_score,
+            )
 
- fit = tailoring_result["fit_analysis"]
- result_entry["fit_score"] = fit.overall_score
- result_entry["recommendation"] = fit.recommendation
+            fit = tailoring_result["fit_analysis"]
+            result_entry["fit_score"] = fit.overall_score
+            result_entry["recommendation"] = fit.recommendation
 
- if fit.overall_score < config.min_fit_score:
- print(f" [WARNING] Fit score {fit.overall_score} below threshold {config.min_fit_score}. Skipping.")
- result_entry["status"] = "below_threshold"
+            if fit.overall_score < config.min_fit_score:
+                print(
+                    f" [WARNING] Fit score {fit.overall_score} below threshold {config.min_fit_score}. Skipping.")
+                result_entry["status"] = "below_threshold"
 
- # Still save to tracker as a skip
- save_application(
- job=job,
- fit=fit,
- resume_text=None,
- cover_letter_text=None,
- notes=f"Auto-skipped: fit score {fit.overall_score} < {config.min_fit_score}",
- )
- summary["results"].append(result_entry)
- continue
+                # Still save to tracker as a skip
+                save_application(
+                    job=job,
+                    fit=fit,
+                    resume_text=None,
+                    cover_letter_text=None,
+                    notes=f"Auto-skipped: fit score {fit.overall_score} < {config.min_fit_score}",
+                )
+                summary["results"].append(result_entry)
+                continue
 
- summary["jobs_above_threshold"] += 1
+            summary["jobs_above_threshold"] += 1
 
- resume = tailoring_result["tailored_resume"]
- cover = tailoring_result["cover_letter"]
+            resume = tailoring_result["tailored_resume"]
+            cover = tailoring_result["cover_letter"]
 
- if resume:
- summary["resumes_tailored"] += 1
+            if resume:
+                summary["resumes_tailored"] += 1
 
- # Save output files
- output_dir = Path("output") / f"{job.company.lower().replace(' ', '_')}_{job.title.lower().replace(' ', '_')}"
- output_dir.mkdir(parents=True, exist_ok=True)
+            # Save output files
+            output_dir = Path(
+                "output") / f"{job.company.lower().replace(' ', '_')}_{job.title.lower().replace(' ', '_')}"
+            output_dir.mkdir(parents=True, exist_ok=True)
 
- (output_dir / "resume.md").write_text(resume.resume_text)
- (output_dir / "cover_letter.md").write_text(cover.full_text)
- (output_dir / "fit_analysis.md").write_text(
- f"# Fit Analysis: {job.title} at {job.company}\n\n"
- f"**Score: {fit.overall_score}/100 — {fit.recommendation}**\n\n"
- f"{fit.reasoning}\n"
- )
- print(f" Materials saved to {output_dir}/")
+            (output_dir / "resume.md").write_text(resume.resume_text)
+            (output_dir / "cover_letter.md").write_text(cover.full_text)
+            (output_dir / "fit_analysis.md").write_text(
+                f"# Fit Analysis: {job.title} at {job.company}\n\n"
+                f"**Score: {fit.overall_score}/100 — {fit.recommendation}**\n\n"
+                f"{fit.reasoning}\n"
+            )
+            print(f" Materials saved to {output_dir}/")
 
- except Exception as e:
- print(f" [ERROR] Tailoring failed: {e}")
- result_entry["status"] = "tailoring_error"
- result_entry["error"] = str(e)
- summary["errors"].append(f"Tailoring error for {job_result.company}: {e}")
- summary["results"].append(result_entry)
- continue
+        except Exception as e:
+            print(f" [ERROR] Tailoring failed: {e}")
+            result_entry["status"] = "tailoring_error"
+            result_entry["error"] = str(e)
+            summary["errors"].append(f"Tailoring error for {job_result.company}: {e}")
+            summary["results"].append(result_entry)
+            continue
 
- # ── 3c: Auto-apply ──────────────────────────────────────────────
- resume_text = resume.resume_text if resume else None
- cover_text = cover.full_text if cover else None
+        # ── 3c: Auto-apply ──────────────────────────────────────────────
+        resume_text = resume.resume_text if resume else None
+        cover_text = cover.full_text if cover else None
 
- if resume_text and job_result.url:
- summary["applications_attempted"] += 1
+        if resume_text and job_result.url:
+            summary["applications_attempted"] += 1
 
- try:
- print(f" Attempting auto-apply...")
- attempt = auto_apply(
- job_url=job_result.url,
- company=job.company,
- title=job.title,
- resume_text=resume_text,
- cover_letter_text=cover_text or "",
- dry_run=config.dry_run,
- )
+            try:
+                print(f" Attempting auto-apply...")
+                attempt = auto_apply(
+                    job_url=job_result.url,
+                    company=job.company,
+                    title=job.title,
+                    resume_text=resume_text,
+                    cover_letter_text=cover_text or "",
+                    dry_run=config.dry_run,
+                )
 
- result_entry["apply_method"] = attempt.method.value
- result_entry["apply_success"] = attempt.success
- if attempt.screenshot_path:
- result_entry["screenshot"] = attempt.screenshot_path
+                result_entry["apply_method"] = attempt.method.value
+                result_entry["apply_success"] = attempt.success
+                if attempt.screenshot_path:
+                    result_entry["screenshot"] = attempt.screenshot_path
 
- if attempt.success:
- summary["applications_submitted"] += 1
- status = ApplicationStatus.APPLIED if not config.dry_run else ApplicationStatus.DRAFT
- elif attempt.method in (ApplyMethod.MANUAL, ApplyMethod.REDIRECT):
- summary["applications_manual"] += 1
- status = ApplicationStatus.DRAFT
+                if attempt.success:
+                    summary["applications_submitted"] += 1
+                    status = ApplicationStatus.APPLIED if not config.dry_run else ApplicationStatus.DRAFT
+                elif attempt.method in (ApplyMethod.MANUAL, ApplyMethod.REDIRECT):
+                    summary["applications_manual"] += 1
+                    status = ApplicationStatus.DRAFT
 
- result_entry["status"] = "manual_needed"
- else:
- status = ApplicationStatus.DRAFT
- result_entry["status"] = "apply_failed"
+                    result_entry["status"] = "manual_needed"
+                else:
+                    status = ApplicationStatus.DRAFT
+                    result_entry["status"] = "apply_failed"
 
- except Exception as e:
- print(f" [ERROR] Auto-apply error: {e}")
- status = ApplicationStatus.DRAFT
- result_entry["status"] = "apply_error"
- result_entry["error"] = str(e)
- summary["errors"].append(f"Apply error for {job_result.company}: {e}")
- else:
- status = ApplicationStatus.DRAFT
- result_entry["status"] = "materials_only"
+            except Exception as e:
+                print(f" [ERROR] Auto-apply error: {e}")
+                status = ApplicationStatus.DRAFT
+                result_entry["status"] = "apply_error"
+                result_entry["error"] = str(e)
+                summary["errors"].append(f"Apply error for {job_result.company}: {e}")
+        else:
+            status = ApplicationStatus.DRAFT
+            result_entry["status"] = "materials_only"
 
- # ── 3d: Save to tracker ─────────────────────────────────────────
- app_id = save_application(
- job=job,
- fit=fit,
- resume_text=resume_text,
- cover_letter_text=cover_text,
- status=status,
- notes=f"Auto-workflow | Score: {fit.overall_score} | {result_entry.get('status', 'processed')}",
- )
- result_entry["app_id"] = app_id
- result_entry["status"] = result_entry.get("status", "processed")
- summary["results"].append(result_entry)
- applied_count += 1
+        # ── 3d: Save to tracker ─────────────────────────────────────────
+        app_id = save_application(
+            job=job,
+            fit=fit,
+            resume_text=resume_text,
+            cover_letter_text=cover_text,
+            status=status,
+            notes=f"Auto-workflow | Score: {fit.overall_score} | {result_entry.get('status', 'processed')}",
+        )
+        result_entry["app_id"] = app_id
+        result_entry["status"] = result_entry.get("status", "processed")
+        summary["results"].append(result_entry)
+        applied_count += 1
 
- # Cooldown between applications
- if applied_count < config.max_applications_per_run:
- print(f" Cooling down {config.delay_between_applies_sec}s...")
- time.sleep(config.delay_between_applies_sec)
+        # Cooldown between applications
+        if applied_count < config.max_applications_per_run:
+            print(f" Cooling down {config.delay_between_applies_sec}s...")
+            time.sleep(config.delay_between_applies_sec)
 
- # ── Step 4: Summary ─────────────────────────────────────────────────
- summary["finished_at"] = datetime.now().isoformat()
- _print_summary(summary, config.dry_run)
+    # ── Step 4: Summary ─────────────────────────────────────────────────
+    summary["finished_at"] = datetime.now().isoformat()
+    _print_summary(summary, config.dry_run)
 
- # Save run report
- report_path = Path("output") / "auto_apply" / f"run_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
- report_path.parent.mkdir(parents=True, exist_ok=True)
- report_path.write_text(json.dumps(summary, indent=2, default=str))
- print(f"\n Full report saved to: {report_path}")
+    # Save run report
+    report_path = Path("output") / "auto_apply" / \
+        f"run_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(summary, indent=2, default=str))
+    print(f"\n Full report saved to: {report_path}")
 
- return summary
+    return summary
 
 
 def _get_existing_applications() -> set:
- """Get set of company|title keys for already-tracked applications."""
- apps = list_applications(limit=500)
- return {
- f"{a['company'].lower()}|{a['title'].lower()}"
- for a in apps
- }
+    """Get set of company|title keys for already-tracked applications."""
+    apps = list_applications(limit=500)
+    return {
+        f"{a['company'].lower()}|{a['title'].lower()}"
+        for a in apps
+    }
 
 
 def _print_summary(summary: dict, dry_run: bool):
- """Print a formatted summary of the workflow run."""
- print("\n" + "=" * 70)
- print(" WORKFLOW SUMMARY")
- print("=" * 70)
- mode = "DRY RUN" if dry_run else "LIVE"
- print(f" Mode: {mode}")
- print(f" Jobs found: {summary['jobs_found']}")
- print(f" Jobs parsed: {summary['jobs_parsed']}")
- print(f" Above fit threshold: {summary['jobs_above_threshold']}")
- print(f" Resumes tailored: {summary['resumes_tailored']}")
- print(f" Apply attempts: {summary['applications_attempted']}")
- print(f" Submitted: {summary['applications_submitted']}")
- print(f" Manual needed: {summary['applications_manual']}")
- if summary["errors"]:
- print(f" Errors: {len(summary['errors'])}")
- print("=" * 70)
+    """Print a formatted summary of the workflow run."""
+    print("\n" + "=" * 70)
+    print(" WORKFLOW SUMMARY")
+    print("=" * 70)
+    mode = "DRY RUN" if dry_run else "LIVE"
+    print(f" Mode: {mode}")
+    print(f" Jobs found: {summary['jobs_found']}")
+    print(f" Jobs parsed: {summary['jobs_parsed']}")
+    print(f" Above fit threshold: {summary['jobs_above_threshold']}")
+    print(f" Resumes tailored: {summary['resumes_tailored']}")
+    print(f" Apply attempts: {summary['applications_attempted']}")
+    print(f" Submitted: {summary['applications_submitted']}")
+    print(f" Manual needed: {summary['applications_manual']}")
+    if summary["errors"]:
+        print(f" Errors: {len(summary['errors'])}")
+    print("=" * 70)
 
- # Show individual results
- if summary["results"]:
- print(f"\n{'#':<4} {'Company':<20} {'Score':<6} {'Status':<18} {'Method':<12}")
- print("-" * 64)
- for i, r in enumerate(summary["results"], 1):
- score = str(r.get("fit_score", "-"))
- status = r.get("status", "?")
- method = r.get("apply_method", "-")
- print(
- f"{i:<4} {r['company'][:19]:<20} {score:<6} "
- f"{status[:17]:<18} {method:<12}"
- )
+    # Show individual results
+    if summary["results"]:
+        print(f"\n{'#':<4} {'Company':<20} {'Score':<6} {'Status':<18} {'Method':<12}")
+        print("-" * 64)
+        for i, r in enumerate(summary["results"], 1):
+            score = str(r.get("fit_score", "-"))
+            status = r.get("status", "?")
+            method = r.get("apply_method", "-")
+            print(
+                f"{i:<4} {r['company'][:19]:<20} {score:<6} "
+                f"{status[:17]:<18} {method:<12}"
+            )
 
- if dry_run:
- print("\n[TIP] This was a DRY RUN. To submit applications for real, run:")
- print(" python main.py run --live")
- print()
+    if dry_run:
+        print("\n[TIP] This was a DRY RUN. To submit applications for real, run:")
+        print(" python main.py run --live")
+    print()
