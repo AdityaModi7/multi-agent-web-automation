@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+output/
+data/applications.db
+data/last_search.json
+.env

@@ -1,46 +1,45 @@
 """Profile Loader — Parses your resume/profile into structured data."""
 
+from models import Profile
+from utils.llm import call_llm_json
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.llm import call_llm_json
-from models import Profile
 
 
 PROFILE_PARSER_PROMPT = """You are a resume parser. Given resume text, extract structured professional profile data.
 
 Return ONLY valid JSON (no markdown, no backticks) with this schema:
 {
-    "name": "Full Name",
-    "email": "email@example.com",
-    "phone": "phone number" or null,
-    "location": "City, State" or null,
-    "linkedin": "URL" or null,
-    "github": "URL" or null,
-    "portfolio": "URL" or null,
-    "summary": "Professional summary paragraph",
-    "experience": [
-        {
-            "company": "Company Name",
-            "title": "Job Title",
-            "start_date": "Month Year",
-            "end_date": "Month Year or Present",
-            "highlights": ["achievement 1 with metrics", "achievement 2"],
-            "technologies": ["Python", "AWS", "etc"]
-        }
-    ],
-    "education": [
-        {
-            "institution": "University Name",
-            "degree": "Bachelor's/Master's/etc",
-            "field": "Computer Science",
-            "graduation_date": "Year",
-            "gpa": "3.8" or null
-        }
-    ],
-    "skills": ["skill1", "skill2"],
-    "certifications": ["cert1", "cert2"]
+ "name": "Full Name",
+ "email": "email@example.com",
+ "phone": "phone number" or null,
+ "location": "City, State" or null,
+ "linkedin": "URL" or null,
+ "github": "URL" or null,
+ "portfolio": "URL" or null,
+ "summary": "Professional summary paragraph",
+ "experience": [
+ {
+ "company": "Company Name",
+ "title": "Job Title",
+ "start_date": "Month Year",
+ "end_date": "Month Year or Present",
+ "highlights": ["achievement 1 with metrics", "achievement 2"],
+ "technologies": ["Python", "AWS", "etc"]
+ }
+ ],
+ "education": [
+ {
+ "institution": "University Name",
+ "degree": "Bachelor's/Master's/etc",
+ "field": "Computer Science",
+ "graduation_date": "Year",
+ "gpa": "3.8" or null
+ }
+ ],
+ "skills": ["skill1", "skill2"],
+ "certifications": ["cert1", "cert2"]
 }
 
 Be thorough — extract every skill, technology, and achievement mentioned."""

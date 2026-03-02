@@ -4,34 +4,33 @@ Supports JS-rendered pages (Ashby, Greenhouse, Lever, etc.) via Playwright.
 Falls back to requests+BeautifulSoup for simple pages.
 """
 
+from models import JobPosting
+from utils.llm import call_llm_json
+from bs4 import BeautifulSoup
+import requests
 import sys
 import re
 import json
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import requests
-from bs4 import BeautifulSoup
-from utils.llm import call_llm_json
-from models import JobPosting
-
 
 PARSER_SYSTEM_PROMPT = """You are a job posting parser. Given raw job posting text, extract structured information.
 
 Return ONLY valid JSON with this exact schema (no markdown, no backticks):
 {
-    "title": "Job Title",
-    "company": "Company Name",
-    "location": "City, State or Remote",
-    "remote": true,
-    "salary_range": "$X - $Y" or null,
-    "description": "Brief 2-3 sentence summary of the role",
-    "responsibilities": ["responsibility 1", "responsibility 2"],
-    "required_skills": ["skill 1", "skill 2"],
-    "preferred_skills": ["nice-to-have 1", "nice-to-have 2"],
-    "required_experience_years": null,
-    "education_requirement": "Bachelor's in CS" or null,
-    "company_info": "Brief company description if available" or null
+ "title": "Job Title",
+ "company": "Company Name",
+ "location": "City, State or Remote",
+ "remote": true,
+ "salary_range": "$X - $Y" or null,
+ "description": "Brief 2-3 sentence summary of the role",
+ "responsibilities": ["responsibility 1", "responsibility 2"],
+ "required_skills": ["skill 1", "skill 2"],
+ "preferred_skills": ["nice-to-have 1", "nice-to-have 2"],
+ "required_experience_years": null,
+ "education_requirement": "Bachelor's in CS" or null,
+ "company_info": "Brief company description if available" or null
 }
 
 IMPORTANT: Every field must have a value. For title, company, and description use your best guess from the text — never return null for these. Be thorough in extracting skills."""
@@ -40,13 +39,13 @@ IMPORTANT: Every field must have a value. For title, company, and description us
 # ── Sites that need a real browser ────────────────────────────────────────
 
 JS_RENDERED_SITES = [
-    "ashbyhq.com",
-    "lever.co",
-    "myworkdayjobs.com",
-    "workday.com",
-    "icims.com",
-    "smartrecruiters.com",
-    "jobvite.com",
+                "ashbyhq.com",
+                "lever.co",
+                "myworkdayjobs.com",
+                "workday.com",
+                "icims.com",
+                "smartrecruiters.com",
+                "jobvite.com",
 ]
 
 
@@ -65,8 +64,8 @@ def fetch_with_browser(url: str) -> str:
         raise ImportError(
             "Playwright is required for JS-rendered pages.\n"
             "Install it:\n"
-            "  pip install playwright\n"
-            "  playwright install chromium"
+            " pip install playwright\n"
+            " playwright install chromium"
         )
 
     with sync_playwright() as p:
@@ -116,8 +115,8 @@ def fetch_html_simple(url: str) -> str:
     """Simple HTML fetcher for non-JS pages."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/120.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
     }
     response = requests.get(url, headers=headers, timeout=15)
     response.raise_for_status()
@@ -158,49 +157,49 @@ def fetch_job_url(url: str) -> str:
 
     # For known JS-rendered sites, go straight to browser
     if needs_browser(url):
-        print(f"   🌐 JS-rendered site detected, using browser...")
+        print(f" JS-rendered site detected, using browser...")
         try:
             text = fetch_with_browser(url)
             if len(text.strip()) > 100:
-                print(f"   ✅ Fetched {len(text)} characters via browser")
+                print(f" [OK] Fetched {len(text)} characters via browser")
                 return text
         except ImportError as e:
-            print(f"   ⚠️  {e}")
+            print(f" [WARNING] {e}")
         except Exception as e:
-            print(f"   ⚠️  Browser fetch failed: {e}")
+            print(f" [WARNING] Browser fetch failed: {e}")
 
     # Try simple HTML fetch
-    print(f"   ⚡ Trying simple HTML scraper...")
+    print(f" Trying simple HTML scraper...")
     try:
         text = fetch_html_simple(url)
         if len(text.strip()) > 100:
-            print(f"   ✅ Fetched {len(text)} characters")
+            print(f" [OK] Fetched {len(text)} characters")
             return text
     except Exception as e:
-        print(f"   ⚠️  HTML scraper failed: {e}")
+        print(f" [WARNING] HTML scraper failed: {e}")
 
     # If simple fetch didn't work and we haven't tried browser yet, try it
     if not needs_browser(url):
-        print(f"   🌐 Simple scraper insufficient, trying browser...")
+        print(f" Simple scraper insufficient, trying browser...")
         try:
             text = fetch_with_browser(url)
             if len(text.strip()) > 100:
-                print(f"   ✅ Fetched {len(text)} characters via browser")
+                print(f" [OK] Fetched {len(text)} characters via browser")
                 return text
         except ImportError:
             pass
         except Exception as e:
-            print(f"   ⚠️  Browser fetch also failed: {e}")
+            print(f" [WARNING] Browser fetch also failed: {e}")
 
     # All strategies failed
     raise ValueError(
         "Could not extract job posting content from this URL.\n\n"
         "Try instead:\n"
-        "  1. Copy the job description text from the page\n"
-        "  2. Save it to a file (e.g., job.txt)\n"
-        "  3. Run: python main.py apply --job-file job.txt\n\n"
+        " 1. Copy the job description text from the page\n"
+        " 2. Save it to a file (e.g., job.txt)\n"
+        " 3. Run: python main.py apply --job-file job.txt\n\n"
         "Or paste it directly:\n"
-        "  python main.py apply  (then paste and hit Ctrl+D)"
+        " python main.py apply (then paste and hit Ctrl+D)"
     )
 
 

@@ -24,7 +24,7 @@ def get_client():
 
 def call_llm(system_prompt: str, user_message: str, max_tokens: int = 2000) -> str:
     """Call the LLM and return the text response.
-    
+
     Works with either Anthropic or OpenAI depending on which key is set.
     """
     provider = get_client()
@@ -56,7 +56,7 @@ def call_llm(system_prompt: str, user_message: str, max_tokens: int = 2000) -> s
 
 def call_llm_json(system_prompt: str, user_message: str, max_tokens: int = 2000) -> dict:
     """Call the LLM and parse the response as JSON.
-    
+
     Handles markdown code fences that models sometimes add.
     """
     response_text = call_llm(system_prompt, user_message, max_tokens)

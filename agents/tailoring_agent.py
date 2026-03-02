@@ -1,13 +1,12 @@
 """Tailoring Agent — The core intelligence that customizes applications."""
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.llm import call_llm_json
 from models import (
     Profile, JobPosting, FitAnalysis, TailoredResume, CoverLetter
 )
+from utils.llm import call_llm_json
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # ── Fit Analysis ──────────────────────────────────────────────────────────
@@ -18,18 +17,18 @@ Think like a hiring manager reviewing this application. Be honest and specific.
 
 Return ONLY valid JSON (no markdown, no backticks):
 {
-    "overall_score": 0-100,
-    "strong_matches": [
-        {"requirement": "what the job needs", "match_level": "strong", "evidence": "specific experience from resume"}
-    ],
-    "partial_matches": [
-        {"requirement": "what the job needs", "match_level": "partial", "evidence": "related but not exact experience"}
-    ],
-    "gaps": [
-        {"requirement": "what the job needs", "match_level": "gap", "evidence": "what the candidate lacks and how to address it"}
-    ],
-    "recommendation": "Should apply" or "Maybe" or "Skip",
-    "reasoning": "2-3 sentence explanation of the overall fit"
+ "overall_score": 0-100,
+ "strong_matches": [
+ {"requirement": "what the job needs", "match_level": "strong", "evidence": "specific experience from resume"}
+ ],
+ "partial_matches": [
+ {"requirement": "what the job needs", "match_level": "partial", "evidence": "related but not exact experience"}
+ ],
+ "gaps": [
+ {"requirement": "what the job needs", "match_level": "gap", "evidence": "what the candidate lacks and how to address it"}
+ ],
+ "recommendation": "Should apply" or "Maybe" or "Skip",
+ "reasoning": "2-3 sentence explanation of the overall fit"
 }
 
 Scoring guide:
@@ -74,15 +73,15 @@ The resume should feel like it was written BY this person FOR this specific job,
 
 Return ONLY valid JSON (no markdown, no backticks):
 {
-    "summary": "2-3 sentence tailored professional summary using job-relevant keywords",
-    "experience_highlights": {
-        "Company Name": [
-            "Tailored bullet point emphasizing relevant impact",
-            "Another tailored bullet point"
-        ]
-    },
-    "skills_section": ["most relevant skill first", "second most relevant", "..."],
-    "resume_text": "The complete formatted resume text ready to submit. Include ALL sections: name, contact info, summary, ALL experience entries, ALL projects, skills (technical only), education. Never omit any role or project."
+ "summary": "2-3 sentence tailored professional summary using job-relevant keywords",
+ "experience_highlights": {
+ "Company Name": [
+ "Tailored bullet point emphasizing relevant impact",
+ "Another tailored bullet point"
+ ]
+ },
+ "skills_section": ["most relevant skill first", "second most relevant", "..."],
+ "resume_text": "The complete formatted resume text ready to submit. Include ALL sections: name, contact info, summary, ALL experience entries, ALL projects, skills (technical only), education. Never omit any role or project."
 }"""
 
 
@@ -119,11 +118,11 @@ Key principles:
 
 Return ONLY valid JSON (no markdown, no backticks):
 {
-    "greeting": "Dear [Hiring Manager / specific name if known],",
-    "opening": "Opening paragraph (2-3 sentences)",
-    "body": "Body paragraphs (evidence of fit, 2-3 short paragraphs)",
-    "closing": "Closing paragraph with call to action (2-3 sentences)",
-    "full_text": "The complete cover letter including greeting and sign-off"
+ "greeting": "Dear [Hiring Manager / specific name if known],",
+ "opening": "Opening paragraph (2-3 sentences)",
+ "body": "Body paragraphs (evidence of fit, 2-3 short paragraphs)",
+ "closing": "Closing paragraph with call to action (2-3 sentences)",
+ "full_text": "The complete cover letter including greeting and sign-off"
 }"""
 
 
@@ -159,26 +158,30 @@ def run_tailoring_pipeline(
     skip_if_below: int = 40,
 ) -> dict:
     """Run the complete tailoring pipeline."""
-    print(f"\n🔍 Analyzing fit for: {job.title} at {job.company}...")
+    print(f"\n Analyzing fit for: {job.title} at {job.company}...")
     fit = analyze_fit(profile, job)
-    print(f"   Score: {fit.overall_score}/100 — {fit.recommendation}")
-    print(f"   {len(fit.strong_matches)} strong | {len(fit.partial_matches)} partial | {len(fit.gaps)} gaps")
+    print(f" Score: {fit.overall_score}/100 — {fit.recommendation}")
+    print(f" {len(fit.strong_matches)} strong | {len(fit.partial_matches)} partial | {len(fit.gaps)} gaps")
 
-    result = {"fit_analysis": fit, "tailored_resume": None, "cover_letter": None}
+    result = {"fit_analysis": fit,
+              "tailored_resume": None, "cover_letter": None}
 
     if fit.overall_score < skip_if_below:
-        print(f"\n⚠️  Fit score ({fit.overall_score}) below threshold ({skip_if_below}). Skipping.")
-        print(f"   Reason: {fit.reasoning}")
+        print(
+            f"\n[WARNING] Fit score ({fit.overall_score}) below threshold ({skip_if_below}). Skipping.")
+        print(f" Reason: {fit.reasoning}")
         return result
 
-    print(f"\n📝 Tailoring resume...")
+    print(f"\n Tailoring resume...")
     resume = tailor_resume(profile, job, fit)
     result["tailored_resume"] = resume
-    print(f"   ✅ Resume tailored — {len(resume.skills_section)} skills highlighted")
+    print(
+        f" [OK] Resume tailored — {len(resume.skills_section)} skills highlighted")
 
-    print(f"\n✉️  Writing cover letter...")
+    print(f"\n Writing cover letter...")
     cover = generate_cover_letter(profile, job, fit)
     result["cover_letter"] = cover
-    print(f"   ✅ Cover letter generated — {len(cover.full_text.split())} words")
+    print(
+        f" [OK] Cover letter generated — {len(cover.full_text.split())} words")
 
     return result
