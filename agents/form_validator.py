@@ -112,13 +112,26 @@ def extract_filled_fields(page) -> dict:
     # Check file inputs for uploads
     file_inputs = page.query_selector_all('input[type="file"]')
     for fi in file_inputs:
-        # Can't read the value directly, but check nearby text for upload confirmation
-        parent = fi.evaluate("el => el.parentElement ? el.parentElement.innerText : ''")
         name = fi.get_attribute("name") or fi.get_attribute("id") or "file"
-        if parent and any(kw in parent.lower() for kw in ["uploaded", "resume", ".pdf", ".md", ".txt", ".doc"]):
+        # Check if the file input has a value set (Playwright sets files via setInputFiles)
+        has_files = fi.evaluate("el => el.files && el.files.length > 0")
+        if has_files:
+            file_name = fi.evaluate("el => el.files[0] ? el.files[0].name : ''")
             fields[f"{name}_uploaded"] = "yes"
+            if file_name:
+                fields[f"{name}_filename"] = file_name
         else:
-            fields[f"{name}_uploaded"] = "unknown"
+            # Also check nearby text for upload confirmation (some forms show filename separately)
+            parent = fi.evaluate(
+                "el => { let p = el.closest('.field, .upload, .form-group, div'); "
+                "return p ? p.innerText : (el.parentElement ? el.parentElement.innerText : ''); }"
+            )
+            if parent and any(kw in parent.lower() for kw in [
+                "uploaded", ".pdf", ".md", ".txt", ".doc", ".docx", "resume",
+            ]):
+                fields[f"{name}_uploaded"] = "yes"
+            else:
+                fields[f"{name}_uploaded"] = "unknown"
 
     # Check select elements
     selects = page.query_selector_all('select:visible')

@@ -85,7 +85,7 @@ def get_resume_path(tailored_resume_text: str, company: str, title: str) -> str:
 
 # ── Greenhouse Application ──────────────────────────────────────────────
 
-def apply_greenhouse(page, url: str, info: dict, resume_path: str, cover_letter: str) -> bool:
+def apply_greenhouse(page, url: str, info: dict, resume_path: str, cover_letter: str, dry_run: bool = False) -> bool:
     """Fill and submit a Greenhouse application form."""
     page.goto(url, wait_until="networkidle", timeout=30000)
     page.wait_for_timeout(2000)
@@ -97,10 +97,14 @@ def apply_greenhouse(page, url: str, info: dict, resume_path: str, cover_letter:
         apply_btn.click()
         page.wait_for_timeout(2000)
 
-    # Fill standard Greenhouse fields
+    # Fill standard Greenhouse fields (id-based)
+    name_parts = info.get("name", "").split() if info.get("name") else []
+    first_name = name_parts[0] if name_parts else ""
+    last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+
     field_map = {
-        '#first_name': info.get("name", "").split()[0] if info.get("name") else "",
-        '#last_name': " ".join(info.get("name", "").split()[1:]) if info.get("name") else "",
+        '#first_name': first_name,
+        '#last_name': last_name,
         '#email': info.get("email", ""),
         '#phone': info.get("phone", ""),
     }
@@ -112,24 +116,63 @@ def apply_greenhouse(page, url: str, info: dict, resume_path: str, cover_letter:
                 el.fill(value)
                 page.wait_for_timeout(300)
 
-    # Try alternate field selectors (Greenhouse varies)
-    name_fields = [
-        ('input[name*="first_name"]', info.get("name", "").split()[0]),
-        ('input[name*="last_name"]',
-            " ".join(info.get("name", "").split()[1:])),
+    # Try alternate field selectors (Greenhouse varies by company)
+    alt_fields = [
+        ('input[name*="first_name"]', first_name),
+        ('input[name*="last_name"]', last_name),
         ('input[name*="email"]', info.get("email", "")),
         ('input[name*="phone"]', info.get("phone", "")),
         ('input[name*="linkedin"]', info.get("linkedin", "")),
         ('input[name*="github"]', info.get("github", "")),
         ('input[name*="website"]', info.get("portfolio", "")),
+        # Broader selectors for modern Greenhouse forms
+        ('input[autocomplete="given-name"]', first_name),
+        ('input[autocomplete="family-name"]', last_name),
+        ('input[autocomplete="email"]', info.get("email", "")),
+        ('input[autocomplete="tel"]', info.get("phone", "")),
     ]
 
-    for selector, value in name_fields:
+    for selector, value in alt_fields:
         if value:
             el = page.query_selector(selector)
             if el and not el.input_value():
                 el.fill(value)
                 page.wait_for_timeout(300)
+
+    # Scan all visible inputs by label/placeholder (catches custom Greenhouse forms)
+    all_inputs = page.query_selector_all(
+        'input[type="text"]:visible, input[type="email"]:visible, '
+        'input[type="tel"]:visible, input[type="url"]:visible'
+    )
+    for inp in all_inputs:
+        if inp.input_value():
+            continue  # Already filled
+        placeholder = (inp.get_attribute("placeholder") or "").lower()
+        name_attr = (inp.get_attribute("name") or "").lower()
+        aria = (inp.get_attribute("aria-label") or "").lower()
+        field_id = inp.get_attribute("id") or ""
+        label_text = ""
+        if field_id:
+            label = page.query_selector(f'label[for="{field_id}"]')
+            if label:
+                label_text = label.inner_text().lower()
+        combined = f"{placeholder} {name_attr} {aria} {label_text}"
+
+        if "first" in combined and "name" in combined:
+            inp.fill(first_name)
+        elif "last" in combined and "name" in combined:
+            inp.fill(last_name)
+        elif "full name" in combined or combined.strip() == "name":
+            inp.fill(info.get("name", ""))
+        elif "email" in combined:
+            inp.fill(info.get("email", ""))
+        elif "phone" in combined or "mobile" in combined:
+            inp.fill(info.get("phone", ""))
+        elif "linkedin" in combined:
+            inp.fill(info.get("linkedin", ""))
+        elif "github" in combined:
+            inp.fill(info.get("github", ""))
+        page.wait_for_timeout(200)
 
     # Upload resume
     resume_input = page.query_selector(
@@ -145,6 +188,15 @@ def apply_greenhouse(page, url: str, info: dict, resume_path: str, cover_letter:
         'textarea[name*="cover_letter"], textarea[id*="cover_letter"], '
         'textarea[placeholder*="cover letter"]'
     )
+    if not cover_el:
+        # Try any visible textarea
+        textareas = page.query_selector_all('textarea:visible')
+        for ta in textareas:
+            ta_name = (ta.get_attribute("name") or "").lower()
+            ta_ph = (ta.get_attribute("placeholder") or "").lower()
+            if any(kw in f"{ta_name} {ta_ph}" for kw in ["cover", "letter", "additional", "comments"]):
+                cover_el = ta
+                break
     if cover_el and cover_letter:
         cover_el.fill(cover_letter)
 
@@ -161,6 +213,9 @@ def apply_greenhouse(page, url: str, info: dict, resume_path: str, cover_letter:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     screenshot_path = str(screenshot_dir / f"greenhouse_{timestamp}.png")
     page.screenshot(path=screenshot_path, full_page=True)
+
+    if dry_run:
+        return True
 
     # Submit
     submit_btn = page.query_selector(
@@ -181,7 +236,7 @@ def apply_greenhouse(page, url: str, info: dict, resume_path: str, cover_letter:
 
 # ── Lever Application ───────────────────────────────────────────────────
 
-def apply_lever(page, url: str, info: dict, resume_path: str, cover_letter: str) -> bool:
+def apply_lever(page, url: str, info: dict, resume_path: str, cover_letter: str, dry_run: bool = False) -> bool:
     """Fill and submit a Lever application form."""
     # Lever apply pages are at /apply
     apply_url = url if "/apply" in url else url.rstrip("/") + "/apply"
@@ -217,6 +272,8 @@ def apply_lever(page, url: str, info: dict, resume_path: str, cover_letter: str)
 
     # Cover letter
     cover_el = page.query_selector('textarea[name="comments"]')
+    if not cover_el:
+        cover_el = page.query_selector('textarea:visible')
     if cover_el and cover_letter:
         cover_el.fill(cover_letter)
 
@@ -227,6 +284,9 @@ def apply_lever(page, url: str, info: dict, resume_path: str, cover_letter: str)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     screenshot_path = str(screenshot_dir / f"lever_{timestamp}.png")
     page.screenshot(path=screenshot_path, full_page=True)
+
+    if dry_run:
+        return True
 
     # Submit
     submit_btn = page.query_selector(
@@ -245,7 +305,7 @@ def apply_lever(page, url: str, info: dict, resume_path: str, cover_letter: str)
 
 # ── Ashby Application ───────────────────────────────────────────────────
 
-def apply_ashby(page, url: str, info: dict, resume_path: str, cover_letter: str) -> bool:
+def apply_ashby(page, url: str, info: dict, resume_path: str, cover_letter: str, dry_run: bool = False) -> bool:
     """Fill and submit an Ashby application form."""
     page.goto(url, wait_until="networkidle", timeout=30000)
     page.wait_for_timeout(3000)
@@ -307,6 +367,9 @@ def apply_ashby(page, url: str, info: dict, resume_path: str, cover_letter: str)
     screenshot_path = str(screenshot_dir / f"ashby_{timestamp}.png")
     page.screenshot(path=screenshot_path, full_page=True)
 
+    if dry_run:
+        return True
+
     # Submit
     submit_btn = page.query_selector(
         'button[type="submit"], button:has-text("Submit")')
@@ -322,7 +385,7 @@ def apply_ashby(page, url: str, info: dict, resume_path: str, cover_letter: str)
 
 # ── Workday Application ─────────────────────────────────────────────────
 
-def apply_workday(page, url: str, info: dict, resume_path: str, cover_letter: str) -> bool:
+def apply_workday(page, url: str, info: dict, resume_path: str, cover_letter: str, dry_run: bool = False) -> bool:
     """Fill and submit a Workday application form.
 
     Workday uses a multi-step wizard. We handle the common steps:
@@ -438,6 +501,9 @@ def apply_workday(page, url: str, info: dict, resume_path: str, cover_letter: st
     screenshot_path = str(screenshot_dir / f"workday_{timestamp}.png")
     page.screenshot(path=screenshot_path, full_page=True)
 
+    if dry_run:
+        return True
+
     # Final submit
     submit_btn = page.query_selector(
         'button[data-automation-id="bottom-navigation-next-button"]:has-text("Submit"), '
@@ -475,7 +541,7 @@ Return ONLY valid JSON (no markdown, no backticks):
 }"""
 
 
-def apply_generic(page, url: str, info: dict, resume_path: str, cover_letter: str) -> bool:
+def apply_generic(page, url: str, info: dict, resume_path: str, cover_letter: str, dry_run: bool = False) -> bool:
     """Use LLM to analyze and fill a generic application form."""
     page.goto(url, wait_until="networkidle", timeout=30000)
     page.wait_for_timeout(3000)
@@ -550,6 +616,9 @@ def apply_generic(page, url: str, info: dict, resume_path: str, cover_letter: st
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     screenshot_path = str(screenshot_dir / f"generic_{timestamp}.png")
     page.screenshot(path=screenshot_path, full_page=True)
+
+    if dry_run:
+        return True
 
     # Submit
     submit_selector = analysis.get("submit_selector", 'button[type="submit"]')
@@ -632,48 +701,18 @@ def auto_apply(
 
             if platform == "greenhouse":
                 attempt.method = ApplyMethod.FORM_FILL
-                if dry_run:
-                    # In dry run, navigate and fill but don't submit
-                    page.goto(job_url, wait_until="networkidle", timeout=30000)
-                    screenshot_dir = Path(__file__).parent.parent / \
-                        "output" / "auto_apply" / "screenshots"
-                    screenshot_dir.mkdir(parents=True, exist_ok=True)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    attempt.screenshot_path = str(
-                        screenshot_dir / f"dryrun_greenhouse_{ts}.png")
-                    page.screenshot(path=attempt.screenshot_path, full_page=True)
-                    success = True
-                else:
-                    success = apply_greenhouse(
-                        page, job_url, info, resume_path, cover_letter_text)
+                success = apply_greenhouse(
+                    page, job_url, info, resume_path, cover_letter_text, dry_run=dry_run)
 
             elif platform == "lever":
                 attempt.method = ApplyMethod.FORM_FILL
-                if dry_run:
-                    page.goto(job_url, wait_until="networkidle", timeout=30000)
-                    screenshot_dir = Path(__file__).parent.parent / \
-                        "output" / "auto_apply" / "screenshots"
-                    screenshot_dir.mkdir(parents=True, exist_ok=True)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    attempt.screenshot_path = str(screenshot_dir / f"dryrun_lever_{ts}.png")
-                    page.screenshot(path=attempt.screenshot_path, full_page=True)
-                    success = True
-                else:
-                    success = apply_lever(page, job_url, info, resume_path, cover_letter_text)
+                success = apply_lever(
+                    page, job_url, info, resume_path, cover_letter_text, dry_run=dry_run)
 
             elif platform == "ashby":
                 attempt.method = ApplyMethod.FORM_FILL
-                if dry_run:
-                    page.goto(job_url, wait_until="networkidle", timeout=30000)
-                    screenshot_dir = Path(__file__).parent.parent / \
-                        "output" / "auto_apply" / "screenshots"
-                    screenshot_dir.mkdir(parents=True, exist_ok=True)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    attempt.screenshot_path = str(screenshot_dir / f"dryrun_ashby_{ts}.png")
-                    page.screenshot(path=attempt.screenshot_path, full_page=True)
-                    success = True
-                else:
-                    success = apply_ashby(page, job_url, info, resume_path, cover_letter_text)
+                success = apply_ashby(
+                    page, job_url, info, resume_path, cover_letter_text, dry_run=dry_run)
 
             elif platform == "linkedin":
                 # LinkedIn Easy Apply requires login — flag for manual
@@ -683,18 +722,8 @@ def auto_apply(
 
             elif platform == "workday":
                 attempt.method = ApplyMethod.FORM_FILL
-                if dry_run:
-                    page.goto(job_url, wait_until="networkidle", timeout=45000)
-                    screenshot_dir = Path(__file__).parent.parent / \
-                        "output" / "auto_apply" / "screenshots"
-                    screenshot_dir.mkdir(parents=True, exist_ok=True)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    attempt.screenshot_path = str(screenshot_dir / f"dryrun_workday_{ts}.png")
-                    page.screenshot(path=attempt.screenshot_path, full_page=True)
-                    success = True
-                else:
-                    success = apply_workday(page, job_url, info,
-                                            resume_path, cover_letter_text)
+                success = apply_workday(
+                    page, job_url, info, resume_path, cover_letter_text, dry_run=dry_run)
 
             elif platform == "icims":
                 attempt.method = ApplyMethod.MANUAL
@@ -704,18 +733,8 @@ def auto_apply(
             else:
                 # Try generic form filler
                 attempt.method = ApplyMethod.FORM_FILL
-                if dry_run:
-                    page.goto(job_url, wait_until="networkidle", timeout=30000)
-                    screenshot_dir = Path(__file__).parent.parent / \
-                        "output" / "auto_apply" / "screenshots"
-                    screenshot_dir.mkdir(parents=True, exist_ok=True)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    attempt.screenshot_path = str(screenshot_dir / f"dryrun_generic_{ts}.png")
-                    page.screenshot(path=attempt.screenshot_path, full_page=True)
-                    success = True
-                else:
-                    success = apply_generic(page, job_url, info,
-                                            resume_path, cover_letter_text)
+                success = apply_generic(
+                    page, job_url, info, resume_path, cover_letter_text, dry_run=dry_run)
 
             attempt.success = success
 
