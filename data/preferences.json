@@ -1,0 +1,21 @@
+{
+  "application_defaults": {
+    "needs_sponsorship": false,
+    "work_authorized": true,
+    "willing_to_relocate": true,
+    "willing_hybrid": true,
+    "willing_onsite": true,
+    "how_did_you_hear": "Company Website",
+    "country": "United States",
+    "state": "New York",
+    "years_of_experience": "1",
+    "desired_salary": "",
+    "start_date": "Immediately",
+    "available_start": "2 weeks notice"
+  },
+  "eeoc_skip": true,
+  "auto_check_affirmations": true,
+  "max_retries_per_application": 2,
+  "screenshot_on_fill": true,
+  "pause_before_submit": false
+}

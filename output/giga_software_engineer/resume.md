@@ -1,42 +1,38 @@
 Aditya Modi
 New York City, NY
-848-213-3048
-adityapmodi@gmail.com
-https://linkedin.com/in/aditya-modi
-https://github.com/Aditya
+adityapmodi@gmail.com | 848-213-3048
+LinkedIn: https://linkedin.com/in/aditya-modi | GitHub: https://github.com/Aditya
 
-Summary
-Dynamic software engineer with robust skills in software development and problem-solving, specializing in optimizing AI-driven applications and data frameworks. Proven ability to develop innovative solutions and integrate advanced technologies, seeking to contribute to Giga's engineering team in San Francisco.
+SUMMARY
+Innovative Software Engineer specializing in AI and data science applications, with substantial experience in building systems for AI agents. Proficient in developing data pipelines and agent infrastructures, with a track record of optimizing technologies to enhance performance and reliability.
 
-Experience
-TD Securities, Software Engineering Analyst
-July 2025 - Present
-- Spearheaded the development of a Text-to-SQL chatbot using Python and SQL, enhancing data accessibility by enabling natural language queries.
-- Integrated Vanna OSS with Dremio, streamlining schema retrieval and grounding model responses in a real database context.
-- Evaluated and improved LLM performance, increasing SQL query accuracy and database interaction effectiveness.
-Technologies: Python, SQL, Linux, Vanna.ai, ChromaDB, Dremio
+EXPERIENCE
+TD Securities, New York City, NY
+Software Engineering Analyst (July 2025 - Present)
+- Engineered a Text-to-SQL chatbot to power AI agent interactions, improving natural language processing capabilities.
+- Integrated Vanna OSS with a custom Dremio client, enhancing data retrieval for dynamic knowledge system applications.
+- Conducted evaluations of LLMs to optimize performance in AI applications, driving improvements in accuracy.
+- Reduced retrieval noise in ChromaDB by optimizing RAG retrieval processes, enhancing data relevance significantly.
 
-TD Securities, Software Engineering Intern
-June 2024 - August 2024
-- Engineered a Spring Boot application to efficiently transform live trade data formats, reducing compliance processing time by 40%.
-- Implemented rigorous testing with JUnit and Postman, which decreased production issues significantly.
-Technologies: Spring Boot, Postman, JUnit 5, FIX Protocol, Agile
+Software Engineering Intern (June 2024 - August 2024)
+- Transformed trade data formats, facilitating seamless integration into Veritas storage systems.
+- Developed a Spring Boot engine to ensure compliance with trade storage regulations, reducing query response time.
+- Created a routing application for CME trades, optimizing data processing for downstream systems.
+- Utilized JUnit and Postman for comprehensive testing, resulting in a 40% reduction in production issues.
 
-Netflix Via the Rutgers MBS Internship Program, Data Extern Team Lead
-June 2023 - August 2023
-- Led a team to develop a data pipeline analyzing over 10,000 user reviews, driving insights into user preferences and content trends.
-- Utilized Python-based tools like VADER for sentiment analysis, achieving a 70% positive feedback rate and influencing content curation.
-- Delivered a comprehensive presentation to 40+ industry professionals.
-Technologies: Python, VADER, Seaborn, Scikit-learn
+Netflix Via the Rutgers MBS Internship Program, New Brunswick, NJ
+Data Extern Team Lead (June 2023 - August 2023)
+- Spearheaded development of a data collection pipeline for Netflix, analyzing extensive user reviews to guide content decisions.
+- Applied sentiment analysis tools to achieve 70% positive feedback detection, informing strategic content curation.
+- Leveraged data visualization and machine learning tools to predict content trends over five years.
 
-Education
+EDUCATION
 Georgia Institute of Technology
-Masters in Computer Science
-Graduation Date: 2027
+Masters in Computer Science (Expected 2027)
 
 Rutgers University
 Bachelor of Science in Computer Science & Data Science
-Graduation Date: 2025, GPA: 3.687
+Graduated May 2025 | GPA: 3.687
 
-Skills
-Python, SQL, Spring Boot, Vanna.ai, Linux, AWS, Docker, Java, JavaScript, HTML, CSS, Bash, Flask, Django, NumPy, Pandas, VADER, JupyterHub, Dremio, VS Code, Swagger, Git
+SKILLS
+Python, SQL, Spring Boot, Vanna.ai, ChromaDB, Dremio, Scikit-learn, VADER, Linux, Docker, AWS, Postman, JUnit 5, FIX Protocol, Agile, Java, JavaScript, HTML, CSS, Bash, Flask, Django, NumPy, Pandas, JupyterHub, VS Code, Swagger, Git

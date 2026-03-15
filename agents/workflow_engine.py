@@ -8,26 +8,37 @@ This is the agentic brain that ties everything together:
 5. Auto-applies (or saves for manual application)
 6. Tracks everything in the database
 
-Supports dry-run mode (default) for safe review before live submission.
+Features:
+- Error recovery: continues processing if individual jobs fail
+- URL-based deduplication: never applies to the same job twice
+- Retry logic: retries transient failures
+- Comprehensive logging and reporting
 """
 
+import sys
+import time
+import json
+import logging
+from pathlib import Path
+from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from agents.auto_applier import auto_apply
-from agents.tracker import save_application, update_status, list_applications
+from agents.tracker import (
+    save_application, update_status, list_applications,
+    is_duplicate, get_existing_urls, get_existing_keys,
+)
 from agents.tailoring_agent import run_tailoring_pipeline
 from agents.profile_loader import load_profile, load_cached_profile, save_profile
 from agents.job_parser import parse_job_posting
 from agents.job_searcher import run_job_search, save_search_results, load_search_results
 from models import (
-                WorkflowConfig, SearchFilters, JobSearchResult,
-                ApplicationStatus, ApplyMethod,
+    WorkflowConfig, SearchFilters, JobSearchResult,
+    ApplicationStatus, ApplyMethod,
 )
-import sys
-import time
-import json
-from pathlib import Path
-from datetime import datetime
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+logger = logging.getLogger("workflow_engine")
 
 
 def get_profile(resume_path: str = None):
@@ -69,6 +80,7 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
         "applications_attempted": 0,
         "applications_submitted": 0,
         "applications_manual": 0,
+        "applications_skipped_duplicate": 0,
         "errors": [],
         "results": [],
     }
@@ -98,25 +110,34 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
         print("\n[WARNING] No jobs found matching criteria. Try broadening search filters.")
         return summary
 
-    # ── Step 3: Process Each Job ────────────────────────────────────────
-    print(
-        f"\n STEP 3: Processing {min(len(search_run.results), config.max_applications_per_run)} jobs...")
+    # ── Step 3: Build dedup sets ────────────────────────────────────────
+    existing_urls = get_existing_urls()
+    existing_keys = get_existing_keys()
+    logger.info(f"Loaded {len(existing_urls)} existing URLs and {len(existing_keys)} company|title keys for dedup")
+
+    # ── Step 4: Process Each Job ────────────────────────────────────────
+    to_process = min(len(search_run.results), config.max_applications_per_run * 2)  # Process extra to account for skips
+    print(f"\n STEP 3: Processing up to {to_process} jobs...")
     print("-" * 70)
 
     applied_count = 0
-    already_applied = _get_existing_applications()
 
-    for i, job_result in enumerate(search_run.results):
+    for i, job_result in enumerate(search_run.results[:to_process]):
         if applied_count >= config.max_applications_per_run:
             print(
                 f"\n[STOP] Reached max applications ({config.max_applications_per_run}). Stopping.")
             break
 
-        # Skip if already applied
+        # ── Deduplication check (URL + company|title) ──────────────
+        if job_result.url and job_result.url in existing_urls:
+            print(f"\n[{i+1}] [SKIP] Already applied (URL match): {job_result.title} at {job_result.company}")
+            summary["applications_skipped_duplicate"] += 1
+            continue
+
         app_key = f"{job_result.company.lower()}|{job_result.title.lower()}"
-        if app_key in already_applied:
-            print(
-                f"\n[{i+1}] [SKIP] Already applied: {job_result.title} at {job_result.company}")
+        if app_key in existing_keys:
+            print(f"\n[{i+1}] [SKIP] Already applied: {job_result.title} at {job_result.company}")
+            summary["applications_skipped_duplicate"] += 1
             continue
 
         print(
@@ -132,7 +153,7 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
             "source": job_result.source,
         }
 
-        # ── 3a: Parse job posting in detail ─────────────────────────────
+        # ── 4a: Parse job posting in detail ─────────────────────────
         try:
             if job_result.url:
                 print(f" Parsing full job posting...")
@@ -155,9 +176,10 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
             result_entry["error"] = str(e)
             summary["errors"].append(f"Parse error for {job_result.company}: {e}")
             summary["results"].append(result_entry)
-            continue
+            logger.error(f"Parse error for {job_result.url}: {e}")
+            continue  # Continue to next job instead of stopping
 
-        # ── 3b: Run tailoring pipeline (fit + resume + cover letter) ────
+        # ── 4b: Run tailoring pipeline (fit + resume + cover letter) ─
         try:
             tailoring_result = run_tailoring_pipeline(
                 profile=profile,
@@ -174,14 +196,18 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
                     f" [WARNING] Fit score {fit.overall_score} below threshold {config.min_fit_score}. Skipping.")
                 result_entry["status"] = "below_threshold"
 
-                # Still save to tracker as a skip
                 save_application(
                     job=job,
                     fit=fit,
                     resume_text=None,
                     cover_letter_text=None,
+                    status=ApplicationStatus.SKIPPED,
                     notes=f"Auto-skipped: fit score {fit.overall_score} < {config.min_fit_score}",
                 )
+                # Add to dedup sets (don't re-analyze skipped jobs)
+                existing_keys.add(app_key)
+                if job_result.url:
+                    existing_urls.add(job_result.url)
                 summary["results"].append(result_entry)
                 continue
 
@@ -194,8 +220,9 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
                 summary["resumes_tailored"] += 1
 
             # Save output files
-            output_dir = Path(
-                "output") / f"{job.company.lower().replace(' ', '_')}_{job.title.lower().replace(' ', '_')}"
+            safe_company = job.company.lower().replace(' ', '_').replace('/', '_')[:25]
+            safe_title = job.title.lower().replace(' ', '_').replace('/', '_')[:30]
+            output_dir = Path("output") / f"{safe_company}_{safe_title}"
             output_dir.mkdir(parents=True, exist_ok=True)
 
             (output_dir / "resume.md").write_text(resume.resume_text)
@@ -213,9 +240,10 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
             result_entry["error"] = str(e)
             summary["errors"].append(f"Tailoring error for {job_result.company}: {e}")
             summary["results"].append(result_entry)
-            continue
+            logger.error(f"Tailoring error for {job_result.company}: {e}")
+            continue  # Continue to next job
 
-        # ── 3c: Auto-apply ──────────────────────────────────────────────
+        # ── 4c: Auto-apply ──────────────────────────────────────────
         resume_text = resume.resume_text if resume else None
         cover_text = cover.full_text if cover else None
 
@@ -241,10 +269,10 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
                 if attempt.success:
                     summary["applications_submitted"] += 1
                     status = ApplicationStatus.APPLIED if not config.dry_run else ApplicationStatus.DRAFT
+                    result_entry["status"] = "submitted" if not config.dry_run else "dry_run_ok"
                 elif attempt.method in (ApplyMethod.MANUAL, ApplyMethod.REDIRECT):
                     summary["applications_manual"] += 1
                     status = ApplicationStatus.DRAFT
-
                     result_entry["status"] = "manual_needed"
                 else:
                     status = ApplicationStatus.DRAFT
@@ -256,11 +284,12 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
                 result_entry["status"] = "apply_error"
                 result_entry["error"] = str(e)
                 summary["errors"].append(f"Apply error for {job_result.company}: {e}")
+                logger.error(f"Apply error for {job_result.company}: {e}")
         else:
             status = ApplicationStatus.DRAFT
             result_entry["status"] = "materials_only"
 
-        # ── 3d: Save to tracker ─────────────────────────────────────────
+        # ── 4d: Save to tracker ─────────────────────────────────────
         app_id = save_application(
             job=job,
             fit=fit,
@@ -274,12 +303,19 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
         summary["results"].append(result_entry)
         applied_count += 1
 
+        # Update dedup sets only for successful applications
+        if status != ApplicationStatus.DRAFT:
+            existing_keys.add(app_key)
+            if job_result.url:
+                existing_urls.add(job_result.url)
+
         # Cooldown between applications
         if applied_count < config.max_applications_per_run:
-            print(f" Cooling down {config.delay_between_applies_sec}s...")
-            time.sleep(config.delay_between_applies_sec)
+            cooldown = config.delay_between_applies_sec
+            print(f" Cooling down {cooldown}s...")
+            time.sleep(cooldown)
 
-    # ── Step 4: Summary ─────────────────────────────────────────────────
+    # ── Step 5: Summary ─────────────────────────────────────────────────
     summary["finished_at"] = datetime.now().isoformat()
     _print_summary(summary, config.dry_run)
 
@@ -293,15 +329,6 @@ def run_workflow(config: WorkflowConfig = None) -> dict:
     return summary
 
 
-def _get_existing_applications() -> set:
-    """Get set of company|title keys for already-tracked applications."""
-    apps = list_applications(limit=500)
-    return {
-        f"{a['company'].lower()}|{a['title'].lower()}"
-        for a in apps
-    }
-
-
 def _print_summary(summary: dict, dry_run: bool):
     """Print a formatted summary of the workflow run."""
     print("\n" + "=" * 70)
@@ -311,6 +338,7 @@ def _print_summary(summary: dict, dry_run: bool):
     print(f" Mode: {mode}")
     print(f" Jobs found: {summary['jobs_found']}")
     print(f" Jobs parsed: {summary['jobs_parsed']}")
+    print(f" Duplicates skipped: {summary['applications_skipped_duplicate']}")
     print(f" Above fit threshold: {summary['jobs_above_threshold']}")
     print(f" Resumes tailored: {summary['resumes_tailored']}")
     print(f" Apply attempts: {summary['applications_attempted']}")

@@ -106,7 +106,8 @@ class CoverLetter(BaseModel):
 # ── Application Tracking ─────────────────────────────────────────────────
 
 class ApplicationStatus(str, Enum):
-                DRAFT = "draft"
+                DRAFT = "draft"           # Apply failed or not yet attempted
+                SKIPPED = "skipped"       # Below fit threshold or not eligible
                 APPLIED = "applied"
                 FOLLOWED_UP = "followed_up"
                 INTERVIEW = "interview"

@@ -1,11 +1,17 @@
-"""Application Tracker — SQLite-backed tracking of all applications."""
+"""Application Tracker — SQLite-backed tracking of all applications.
+
+Tracks applications with URL-based deduplication to prevent applying
+to the same job twice, even across different search runs.
+"""
 
 import json
 import sqlite3
+import logging
 from datetime import datetime
 from pathlib import Path
-from models import Application, ApplicationStatus, JobPosting, FitAnalysis
+from models import ApplicationStatus, JobPosting, FitAnalysis
 
+logger = logging.getLogger("tracker")
 
 DB_PATH = Path(__file__).parent.parent / "data" / "applications.db"
 
@@ -21,6 +27,7 @@ def get_db() -> sqlite3.Connection:
  company TEXT NOT NULL,
  title TEXT NOT NULL,
  location TEXT,
+ job_url TEXT,
  status TEXT DEFAULT 'draft',
  fit_score INTEGER,
  recommendation TEXT,
@@ -35,8 +42,34 @@ def get_db() -> sqlite3.Connection:
  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
  )
  """)
+    # Add job_url column if missing (migration for existing DBs)
+    try:
+        conn.execute("SELECT job_url FROM applications LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE applications ADD COLUMN job_url TEXT")
+        logger.info("Migrated: added job_url column to applications table")
     conn.commit()
     return conn
+
+
+def is_duplicate(company: str, title: str, job_url: str = None) -> bool:
+    """Check if an application already exists (by URL or company+title)."""
+    conn = get_db()
+    # Check by URL first (most reliable)
+    if job_url:
+        row = conn.execute(
+            "SELECT id FROM applications WHERE job_url = ?", (job_url,)
+        ).fetchone()
+        if row:
+            conn.close()
+            return True
+    # Fallback to company+title
+    row = conn.execute(
+        "SELECT id FROM applications WHERE LOWER(company) = ? AND LOWER(title) = ?",
+        (company.lower(), title.lower()),
+    ).fetchone()
+    conn.close()
+    return row is not None
 
 
 def save_application(
@@ -51,13 +84,14 @@ def save_application(
     conn = get_db()
     cursor = conn.execute(
         """INSERT INTO applications
- (company, title, location, status, fit_score, recommendation,
+ (company, title, location, job_url, status, fit_score, recommendation,
  job_data, fit_data, resume_text, cover_letter_text, notes)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             job.company,
             job.title,
             job.location,
+            job.application_url,
             status.value,
             fit.overall_score,
             fit.recommendation,
@@ -71,6 +105,7 @@ def save_application(
     conn.commit()
     app_id = cursor.lastrowid
     conn.close()
+    logger.info(f"Saved application #{app_id}: {job.title} at {job.company}")
     return app_id
 
 
@@ -128,6 +163,44 @@ def list_applications(
     return [dict(row) for row in rows]
 
 
+def get_existing_urls() -> set:
+    """Get job URLs that should be skipped (applied or intentionally skipped, not failed)."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT job_url FROM applications WHERE job_url IS NOT NULL AND status != 'draft'",
+    ).fetchall()
+    conn.close()
+    return {row["job_url"] for row in rows}
+
+
+def get_existing_keys() -> set:
+    """Get set of company|title keys that should be skipped (applied or intentionally skipped)."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT company, title FROM applications WHERE status != 'draft' LIMIT 1000"
+    ).fetchall()
+    conn.close()
+    return {
+        f"{row['company'].lower()}|{row['title'].lower()}"
+        for row in rows
+    }
+
+
+def delete_failed_applications() -> int:
+    """Delete applications that are still in 'draft' status (failed applies).
+    Returns number of deleted rows."""
+    conn = get_db()
+    cursor = conn.execute(
+        "DELETE FROM applications WHERE status = 'draft'"
+    )
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if deleted:
+        logger.info(f"Deleted {deleted} failed/draft applications for retry")
+    return deleted
+
+
 def get_stats() -> dict:
     """Get application statistics."""
     conn = get_db()
@@ -145,12 +218,20 @@ def get_stats() -> dict:
         "SELECT AVG(fit_score) as avg FROM applications"
     ).fetchone()["avg"]
 
+    # Count today's applications
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_count = conn.execute(
+        "SELECT COUNT(*) as c FROM applications WHERE created_at LIKE ?",
+        (f"{today}%",)
+    ).fetchone()["c"]
+
     conn.close()
 
     return {
         "total_applications": total,
         "by_status": by_status,
         "average_fit_score": round(avg_score, 1) if avg_score else 0,
+        "today_applications": today_count,
     }
 
 
@@ -163,6 +244,7 @@ def print_dashboard():
     print(" APPLICATION DASHBOARD")
     print("=" * 60)
     print(f"Total applications: {stats['total_applications']}")
+    print(f"Today: {stats['today_applications']}")
     print(f"Average fit score: {stats['average_fit_score']}")
     print(f"By status: {json.dumps(stats['by_status'], indent=2)}")
 

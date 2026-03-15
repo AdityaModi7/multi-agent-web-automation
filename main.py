@@ -2,12 +2,13 @@
 """Job Application Agent — Main CLI orchestrator.
 
 Commands:
- apply Apply to a single job (URL, text, or file)
- search Search for ML/AI jobs matching criteria
- run Full agentic workflow: search → tailor → apply
+ apply   Apply to a single job (URL, text, or file)
+ search  Search for ML/AI jobs matching criteria
+ run     Full agentic workflow: search → tailor → apply
+ batch   Process multiple jobs from a URL file
  dashboard View application stats
- status Update an application's status
- list List tracked applications
+ status  Update an application's status
+ list    List tracked applications
 """
 
 from agents.tracker import (
@@ -15,22 +16,23 @@ from agents.tracker import (
                 update_status,
                 list_applications,
                 print_dashboard,
-                get_stats,
                 ApplicationStatus,
 )
 from agents.tailoring_agent import run_tailoring_pipeline
 from agents.profile_loader import load_profile, load_cached_profile, save_profile
 from agents.job_parser import parse_job_posting
+from models import Profile
+from utils.logging_config import setup_logging
 import argparse
-import json
 import sys
+import logging
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-def get_profile(resume_path: str = None) -> "Profile":
+def get_profile(resume_path: str = None) -> Profile:
     """Load profile from cache or parse from resume."""
     # Try cache first
     cached = load_cached_profile()
@@ -102,8 +104,9 @@ def cmd_apply(args):
 
     # Output files
     if result["tailored_resume"]:
-        output_dir = Path(
-                        "output") / f"{job.company.lower().replace(' ', '_')}_{job.title.lower().replace(' ', '_')}"
+        safe_company = job.company.lower().replace(' ', '_').replace('/', '_')[:25]
+        safe_title = job.title.lower().replace(' ', '_').replace('/', '_')[:30]
+        output_dir = Path("output") / f"{safe_company}_{safe_title}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         resume_path = output_dir / "resume.md"
@@ -113,6 +116,17 @@ def cmd_apply(args):
         cover_path = output_dir / "cover_letter.md"
         cover_path.write_text(result["cover_letter"].full_text)
         print(f" Cover letter saved: {cover_path}")
+
+        # Generate PDF
+        try:
+            from utils.pdf_generator import markdown_to_pdf
+            pdf_path = markdown_to_pdf(
+                result["tailored_resume"].resume_text,
+                str(output_dir / "resume.pdf"),
+            )
+            print(f" PDF resume: {pdf_path}")
+        except Exception as e:
+            logging.getLogger("main").debug(f"PDF generation skipped: {e}")
 
         # Also save fit analysis
         fit_path = output_dir / "fit_analysis.md"
@@ -134,8 +148,29 @@ def cmd_apply(args):
         fit_path.write_text(fit_summary)
         print(f" Fit analysis saved: {fit_path}")
 
-    print("\n[OK] Done! Review the materials and submit when ready.")
-    print(f" Then run: python main.py status {app_id} applied")
+    # Auto-apply if URL provided and --auto flag set
+    if args.auto and args.job_url and result["tailored_resume"]:
+        from agents.auto_applier import auto_apply
+        print(f"\n Auto-applying...")
+        attempt = auto_apply(
+            job_url=args.job_url,
+            company=job.company,
+            title=job.title,
+            resume_text=resume_text,
+            cover_letter_text=cover_text or "",
+            dry_run=not args.live,
+        )
+        if attempt.success:
+            if args.live:
+                update_status(app_id, ApplicationStatus.APPLIED)
+                print(f" Application submitted!")
+            else:
+                print(f" Dry run completed. Use --live to submit for real.")
+    else:
+        print("\n[OK] Done! Review the materials and submit when ready.")
+        print(f" Then run: python main.py status {app_id} applied")
+        if args.job_url:
+            print(f" Or auto-apply: python main.py apply -u \"{args.job_url}\" --auto")
 
 
 # ── Search Command ──────────────────────────────────────────────────────
@@ -220,7 +255,109 @@ def cmd_run(args):
     run_workflow(config)
 
 
-def cmd_dashboard(args):
+# ── Batch Command ───────────────────────────────────────────────────────
+
+def cmd_batch(args):
+    """Process multiple jobs from a URL file."""
+    from agents.batch_processor import process_batch
+
+    profile = get_profile(args.resume)
+
+    urls = None
+    urls_file = None
+
+    if args.urls_file:
+        urls_file = args.urls_file
+    elif args.urls:
+        urls = [u.strip() for u in args.urls.split(",")]
+    else:
+        # Default to data/job_urls.txt
+        default_file = Path("data/job_urls.txt")
+        if default_file.exists():
+            urls_file = str(default_file)
+        else:
+            print("No URLs provided. Use --urls-file or --urls, or create data/job_urls.txt")
+            return
+
+    if args.live:
+        print("\n[WARNING] LIVE MODE — Applications will be submitted for real!")
+        confirm = input(" Continue? (yes/no): ").strip().lower()
+        if confirm != "yes":
+            print(" Aborted.")
+            return
+
+    process_batch(
+        profile=profile,
+        urls_file=urls_file,
+        urls=urls,
+        min_score=args.min_score,
+        dry_run=not args.live,
+        delay_between=args.delay,
+    )
+
+
+def cmd_login(args):
+    """Log in to job platforms so auto-apply can use saved sessions."""
+    from agents.auto_applier import save_browser_session, SESSION_DIR
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("Playwright not installed. Run: pip install playwright && playwright install chromium")
+        return
+
+    platform = args.platform
+
+    login_urls = {
+        "linkedin": "https://www.linkedin.com/login",
+        "workday": "https://www.myworkdayjobs.com",
+        "indeed": "https://secure.indeed.com/auth",
+        "smartrecruiters": "https://www.smartrecruiters.com",
+        "icims": None,
+    }
+
+    url = login_urls.get(platform)
+    if not url:
+        print(f"Unknown platform: {platform}")
+        print(f"Available: {', '.join(login_urls.keys())}")
+        return
+
+    print(f"\nOpening {platform} login page in browser...")
+    print(f"Log in, then come back here and press ENTER.\n")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        )
+
+        # Load existing cookies if any
+        cookie_file = SESSION_DIR / f"{platform}_cookies.json"
+        if cookie_file.exists():
+            import json
+            cookies = json.loads(cookie_file.read_text())
+            context.add_cookies(cookies)
+
+        page = context.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        input(f"Press ENTER after you've logged in to {platform}...")
+
+        save_browser_session(context, platform)
+        browser.close()
+
+    print(f"[OK] Session saved for {platform}. Future auto-apply runs will use this session.")
+
+
+def cmd_dashboard(_args):
     """Show application dashboard."""
     print_dashboard()
 
@@ -263,6 +400,8 @@ def main():
     parser = argparse.ArgumentParser(
                     description=" Job Application Agent — AI-powered ML/AI job search & auto-apply"
     )
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Enable verbose debug logging")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # ── apply command ──
@@ -276,6 +415,14 @@ def main():
     apply_parser.add_argument(
                     "--min-score", type=int, default=40,
                     help="Minimum fit score to generate materials (default: 40)"
+    )
+    apply_parser.add_argument(
+                    "--auto", action="store_true",
+                    help="Auto-fill the application form after generating materials"
+    )
+    apply_parser.add_argument(
+                    "--live", action="store_true",
+                    help="Submit the application for real (default: dry run)"
     )
     apply_parser.set_defaults(func=cmd_apply)
 
@@ -310,7 +457,7 @@ def main():
                     help="Full workflow: search → tailor resume → auto-apply"
     )
     run_parser.add_argument("--live", action="store_true",
-                                                                                                            help="Submit applications for real (default: dry run)")
+                            help="Submit applications for real (default: dry run)")
     run_parser.add_argument(
                     "--keywords", "-k",
                     help="Comma-separated keywords (default: ml engineer, ai engineer, data scientist, ...)"
@@ -342,6 +489,25 @@ def main():
     )
     run_parser.set_defaults(func=cmd_run)
 
+    # ── batch command ──
+    batch_parser = subparsers.add_parser(
+                    "batch", help="Process multiple jobs from a URL file")
+    batch_parser.add_argument(
+                    "--urls-file", help="File with one URL per line (default: data/job_urls.txt)")
+    batch_parser.add_argument(
+                    "--urls", help="Comma-separated URLs to process")
+    batch_parser.add_argument("--resume", "-r", help="Path to your resume file")
+    batch_parser.add_argument(
+                    "--min-score", type=int, default=40,
+                    help="Minimum fit score (default: 40)")
+    batch_parser.add_argument(
+                    "--live", action="store_true",
+                    help="Submit applications for real (default: dry run)")
+    batch_parser.add_argument(
+                    "--delay", type=int, default=15,
+                    help="Seconds between applications (default: 15)")
+    batch_parser.set_defaults(func=cmd_batch)
+
     # ── dashboard command ──
     dash_parser = subparsers.add_parser(
                     "dashboard", help="View application dashboard")
@@ -355,6 +521,14 @@ def main():
                     "status", help="New status (draft/applied/interview/rejected/offer/withdrawn)")
     status_parser.set_defaults(func=cmd_status)
 
+    # ── login command ──
+    login_parser = subparsers.add_parser(
+                    "login", help="Log in to a job platform (saves session for auto-apply)")
+    login_parser.add_argument(
+                    "platform",
+                    help="Platform to log in to (linkedin, workday, indeed, smartrecruiters)")
+    login_parser.set_defaults(func=cmd_login)
+
     # ── list command ──
     list_parser = subparsers.add_parser("list", help="List applications")
     list_parser.add_argument("--status", "-s", help="Filter by status")
@@ -362,14 +536,21 @@ def main():
 
     args = parser.parse_args()
 
+    # Setup logging
+    setup_logging(verbose=getattr(args, 'verbose', False))
+
     if not args.command:
         parser.print_help()
         print("\n[TIP] Quick start:")
         print(' python main.py apply --job-url "https://example.com/job"')
-        print(" python main.py search # Find ML/AI jobs")
-        print(" python main.py run # Dry run: search + tailor")
-        print(" python main.py run --live # Full auto-apply")
-        print(" python main.py dashboard # View stats")
+        print(' python main.py apply --job-url "https://example.com/job" --auto  # Auto-fill form')
+        print(" python main.py search                  # Find ML/AI jobs")
+        print(" python main.py run                     # Dry run: search + tailor + auto-fill")
+        print(" python main.py run --live              # Full auto-apply (submits!)")
+        print(" python main.py batch                   # Process URLs from data/job_urls.txt")
+        print(" python main.py batch --live            # Batch auto-apply (submits!)")
+        print(" python main.py login linkedin           # Save LinkedIn session for auto-apply")
+        print(" python main.py dashboard               # View stats")
         return
 
     args.func(args)
