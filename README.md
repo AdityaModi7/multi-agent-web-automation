@@ -132,11 +132,12 @@ Add a test profile to `data/my_resume.md` and adjust `data/preferences.json` to 
 ## Usage
 
 ```bash
-# Run the full pipeline (dry-run, no side effects)
+# Run the entire pipeline (dry-run, no side effects)
 python main.py run
 
 # Run on a single source document
 python main.py apply --url https://example.com/document
+
 
 # Inspect persisted state
 python main.py dashboard
@@ -149,5 +150,6 @@ python main.py list
 - **LLM-agnostic code is harder than it sounds.** Anthropic and OpenAI differ in how they handle structured outputs, retries, and rate limits — abstracting them required custom JSON repair logic.
 - **Semantic scoring is surprisingly stable across providers.** Latency and cost differ significantly, but the actual 0–100 scores were within 5 points across Claude Sonnet 4 and GPT-4o.
 - **Browser automation agents need defensive design.** Real-world web pages are noisy, slow, and inconsistent. The Web Interaction Agent has retries, popup dismissal, and adaptive selectors at every step.
+- **Error recovery matters more than error prevention.** Designing each agent to fail independently and resume gracefully made the system far more robust than trying to prevent failures upfront.
 
 
